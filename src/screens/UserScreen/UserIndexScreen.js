@@ -1,0 +1,244 @@
+import React, {useEffect, useState, useCallback, useRef} from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  FlatList,
+  BackHandler,
+  ToastAndroid,
+} from 'react-native';
+import {useFocusEffect} from '@react-navigation/native';
+import {CardSimpleItem} from '../../components/Card';
+import {Button} from '../../components/Button';
+import {ActionBottomSheet} from '../../components/BottomSheet';
+import AlertDialog from '../../components/Alert';
+import {Pagination} from '../../components/Pagination';
+import Axios from '../../libraries/Axios';
+import {SCREEN_USER_CREATE, SCREEN_USER_EDIT, SCREEN_USER_VIEW} from './index';
+import {Spinner} from '../../components/Spinner';
+
+let currentCount = 0;
+const UserIndexScreen = ({navigation, route}) => {
+  const [users, setUsers] = useState({});
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [page, setPage] = useState(1);
+  const [isFetching, setIsFetching] = useState(false);
+
+  const bottomSheetRef = useRef(null);
+
+  const fetchUsers = useCallback(async () => {
+    //const response = await fetch('https://reqres.in/api/users');
+    //const data = await response.json();
+    setIsFetching(true);
+    const response = await Axios.get(`users?page=${page}&per_page=10`);
+    console.log(JSON.stringify(response.data));
+    setUsers(response.data);
+    setIsFetching(false);
+  }, [page]);
+
+  const updateUser = useCallback(
+    (type, user) => {
+      const index = (users.data || []).findIndex(item => item.id === user.id);
+      if (['user-created', 'user-updated'].includes(type)) {
+        if (index >= 0) {
+          setUsers(item => {
+            const lastUsers = item.data;
+            const updatedUsers = [
+              ...lastUsers.slice(0, index),
+              {...lastUsers[index], ...user},
+              ...lastUsers.slice(index + 1),
+            ];
+            return {...item, data: updatedUsers};
+          });
+        } else if ('user-created') {
+          setUsers(lastUsers => ({
+            ...lastUsers,
+            data: [user, ...lastUsers.data],
+          }));
+        }
+      }
+    },
+    [users],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (currentCount === 1) {
+          return false;
+        }
+        if (currentCount < 1) {
+          currentCount += 1;
+          ToastAndroid.show('Press again to close!', ToastAndroid.SHORT);
+        }
+        setTimeout(() => {
+          currentCount = 0;
+        }, 2000);
+
+        return true;
+      };
+
+      BackHandler.addEventListener('hardwareBackPress', onBackPress);
+
+      return () =>
+        BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+    }, []),
+  );
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers, page]);
+
+  useEffect(() => {
+    const payload = route.params?.payload;
+    if (payload) {
+      updateUser(payload.type, payload.user);
+    }
+  }, [route.params?.payload, fetchUsers]);
+
+  const renderUserList = () => {
+    return (
+      <FlatList
+        data={users.data || []}
+        renderItem={({item, index}) => (
+          <CardSimpleItem
+            key={`user-${item.id}`}
+            title={`${item.first_name} ${item.last_name}`}
+            description={item.email}
+            image={item.avatar}
+            style={
+              index === (users.data || []).length - 1 ? {marginBottom: 85} : {}
+            }
+            buttonAction={true}
+            actionOnPress={() => onOpenBottomSheet(item)}
+            onPress={() => onView(item)}
+            onLongPress={() => onOpenBottomSheet(item)}
+          />
+        )}
+        keyExtractor={item => item.id}
+        onRefresh={fetchUsers}
+        refreshing={isFetching}
+        showsVerticalScrollIndicator={false}
+      />
+    );
+  };
+
+  const onOpenBottomSheet = user => {
+    bottomSheetRef.current.expand();
+    setSelectedUser(user);
+  };
+
+  const onView = user => {
+    navigation.navigate(SCREEN_USER_VIEW, {
+      id: user.id,
+      name: `${user.first_name} ${user.last_name}`,
+    });
+  };
+
+  const onEdit = user => {
+    navigation.navigate(SCREEN_USER_EDIT, {
+      id: user.id,
+      name: `${user.first_name} ${user.last_name}`,
+    });
+  };
+
+  const onDelete = user => {
+    AlertDialog.confirm({
+      title: 'Delete User',
+      message: `Are you sure want to delete user ${user.first_name} ${user.last_name}?`,
+      addCloseAction: true,
+      negativeAction: {
+        text: 'Cancel',
+        onPress: () => bottomSheetRef.current.expand(),
+      },
+      positiveAction: {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          const data = {...users};
+          data.data = data.data.filter(item => item.id !== user.id);
+          setUsers(data);
+        },
+      },
+    });
+  };
+
+  return (
+    <View style={styles.sectionContainer}>
+      <View style={styles.sectionTitleWrapper}>
+        <Text style={styles.sectionTitle}>Users</Text>
+        <View>
+          <Button
+            onPress={() => navigation.navigate(SCREEN_USER_CREATE)}
+            title="Create User"
+          />
+        </View>
+      </View>
+
+      {isFetching ? <Spinner position="inline-center" /> : renderUserList()}
+
+      <Pagination
+        style={styles.pagination}
+        page={users.page || 1}
+        totalPage={users.total_pages || 0}
+        onPageChange={({currentPage}) => {
+          if (currentPage !== page) {
+            setPage(currentPage);
+          }
+        }}
+      />
+
+      <ActionBottomSheet
+        actionRef={bottomSheetRef}
+        actionTitle="Select Action"
+        actionClose="Cancel"
+        actions={[
+          {
+            action: 'View Details',
+            onPress: () => onView(selectedUser),
+            closeOnPress: true,
+          },
+          {
+            action: 'Edit User',
+            onPress: () => onEdit(selectedUser),
+            closeOnPress: true,
+          },
+          {
+            action: 'Delete User',
+            onPress: () => onDelete(selectedUser),
+            closeOnPress: true,
+          },
+        ]}
+      />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  sectionContainer: {
+    flex: 1,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+  },
+  sectionTitleWrapper: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: 'black',
+  },
+  pagination: {
+    position: 'absolute',
+    alignContent: 'center',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, .1)',
+  },
+});
+
+export default UserIndexScreen;
